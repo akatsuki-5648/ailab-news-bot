@@ -287,37 +287,78 @@ def fetch_sitemap(src):
 #   なので外部ライブラリを経由せず urllib.request.urlopen(timeout=...) で
 #   Google翻訳の非公式エンドポイントを直接叩く＝ソケットレベルの本物のタイムアウトにする。
 _JP_RE = re.compile(r"[ぁ-んァ-ヶ一-龠]")
-_TR_FAIL_STREAK = 0
-_TR_TIMEOUT_SEC = 6
-_TR_MAX_FAIL_STREAK = 3   # これだけ連続で失敗/タイムアウトしたら以後は翻訳を諦める(原文のまま)
+_TR_TIMEOUT_SEC = 8
+_TR_MAX_FAIL = 3          # 1エンジンがこの回数連続で失敗したら、そのエンジンだけ以後スキップ(他は生かす)
 
 def is_ja(t):
     if not t: return True
     return len(_JP_RE.findall(t)) >= max(3, int(len(t) * 0.12))   # 既に日本語なら翻訳しない
 
-def _gtranslate(text, timeout):
+# ---- 翻訳エンジン（★単一エンジンの上限で全滅しないよう複数を分散運用する）----
+# 2026-09-03 実叩き: google gtx / MyMemory / Gemini の3つが日本語を返した。
+#   Lingva(2インスタンス)=HTTP500 / LibreTranslate(2インスタンス)=timeout・JSONエラー で不採用。
+#   ★google gtx はローカルからは通るが GitHub Actions のIPからは弾かれる実績あり
+#     (ログ実物「翻訳サーバー応答なし(6s×3回連続) → 以後は原文のまま投稿」= 英語のまま98件の原因)。
+#     だから単独運用にせず、記事ごとにエンジンを回して負荷を 1/N に分散する。
+def _tr_google(text, timeout):
     url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
-        "client": "gtx", "sl": "auto", "tl": "ja", "dt": "t", "q": text[:4800]
-    })
+        "client": "gtx", "sl": "auto", "tl": "ja", "dt": "t", "q": text[:4800]})
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:   # timeout=ソケットレベルで確実に打ち切る
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return "".join(seg[0] for seg in data[0] if seg and seg[0])
 
+def _tr_mymemory(text, timeout):
+    url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode({
+        "q": text[:500], "langpair": "en|ja"})
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        d = json.loads(resp.read().decode("utf-8"))
+    return (d.get("responseData") or {}).get("translatedText", "")
+
+def _tr_gemini(text, timeout):
+    key = os.environ.get("GOOGLE_AI_API_KEY", "")
+    if not key:
+        raise RuntimeError("no GOOGLE_AI_API_KEY")
+    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+           "gemini-3.1-flash-lite:generateContent?key=" + key)
+    body = {"contents": [{"parts": [{"text":
+            "次の英文を自然な日本語のニュース見出しに訳してください。訳文だけを出力:\n" + text[:900]}]}]}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "User-Agent": UA},
+                                 method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        d = json.loads(resp.read().decode("utf-8"))
+    return d["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+_ENGINES = [("google", _tr_google), ("mymemory", _tr_mymemory), ("gemini", _tr_gemini)]
+_ENG_FAIL = {name: 0 for name, _ in _ENGINES}   # エンジンごとの連続失敗数
+_ENG_IDX = 0                                     # ラウンドロビンの現在位置
+
 def to_ja(t):
-    global _TR_FAIL_STREAK
-    if not t or is_ja(t): return t
-    if _TR_FAIL_STREAK >= _TR_MAX_FAIL_STREAK:
-        return t   # 回路遮断中：翻訳サーバーに繋がらない状況と判断し、以後は叩かず原文のまま
-    try:
-        result = _gtranslate(t, _TR_TIMEOUT_SEC)
-        _TR_FAIL_STREAK = 0
-        return result or t
-    except Exception:
-        _TR_FAIL_STREAK += 1
-        if _TR_FAIL_STREAK >= _TR_MAX_FAIL_STREAK:
-            print(f"    翻訳サーバー応答なし({_TR_TIMEOUT_SEC}s×{_TR_MAX_FAIL_STREAK}回連続) → 以後は原文のまま投稿")
-        return t   # タイムアウト/失敗時は原文のまま（重要ニュースは英語でも可）
+    """★複数エンジンをラウンドロビンで分散。1エンジンあたりの負荷を 1/N に下げ、
+       上限や遮断で1つ落ちても残りが拾う。全部失敗した時だけ原文を返す。"""
+    global _ENG_IDX
+    if not t or is_ja(t):
+        return t
+    n = len(_ENGINES)
+    for k in range(n):
+        idx = (_ENG_IDX + k) % n
+        name, fn = _ENGINES[idx]
+        if _ENG_FAIL[name] >= _TR_MAX_FAIL:      # そのエンジンだけ諦める(他は生かす)
+            continue
+        try:
+            out = fn(t, _TR_TIMEOUT_SEC)
+            if out and is_ja(out):
+                _ENG_FAIL[name] = 0
+                _ENG_IDX = (idx + 1) % n          # 次の記事は次のエンジンから＝負荷分散
+                return out
+            _ENG_FAIL[name] += 1                  # 応答はしたが日本語でない
+        except Exception:
+            _ENG_FAIL[name] += 1
+            if _ENG_FAIL[name] == _TR_MAX_FAIL:
+                print(f"    翻訳エンジン {name} を以後スキップ({_TR_MAX_FAIL}回連続失敗)")
+    return t   # 全エンジン失敗＝原文のまま(重要ニュースは英語でも出す)
 
 def load_webhooks():
     m = {}
@@ -434,15 +475,28 @@ def post(url, header, items, color):
     body = {"content": header, "embeds": embeds[:10]}
     r = urllib.request.Request(url, data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json", "User-Agent": UA}, method="POST")
-    while True:
+    # ★2026-09-03: 旧実装は while True で429を無限リトライしており、Discord側のレート制限が
+    #   続くと run が終わらなくなる(実測: 1runが16分以上 in_progress のまま残り、concurrencyで
+    #   後続の【自動起動run】が cancelled になった＝自動配信が殺された)。
+    #   リトライ回数・1回の待ち・累計待ちの3つに上限を入れて必ず抜ける。
+    MAX_RETRY = 5
+    total_wait = 0.0
+    for attempt in range(MAX_RETRY):
         try:
             with urllib.request.urlopen(r, timeout=20) as x: return x.status
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 try: retry = float(json.loads(e.read()).get("retry_after", 1.0))
                 except Exception: retry = 1.0
+                retry = min(retry, 10.0)                      # 1回の待ちの上限
+                total_wait += retry + 0.3
+                if attempt >= MAX_RETRY - 1 or total_wait > 30:
+                    return f"429:give_up(try{attempt+1},wait{total_wait:.0f}s)"
                 time.sleep(retry + 0.3); continue
             return f"{e.code}:{e.read().decode('utf-8','replace')[:120]}"
+        except Exception as e:
+            return f"ERR:{type(e).__name__}"
+    return "429:give_up"
 
 def main():
     hooks = load_webhooks(); seen = load_seen()

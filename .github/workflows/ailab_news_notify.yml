@@ -1,0 +1,70 @@
+name: AIラボ 15分類 AI News Notifier
+
+on:
+  schedule:
+    # ★2026-09-03 実測: "15,45"(1日48回)の設定に対し、実際の実行は1日6〜9回まで間引かれていた
+    #   (GitHub Actionsのscheduleは高負荷時に遅延・スキップされる仕様)。
+    #   混雑しやすい 0/15/30/45分を避けた分に移し、15分毎(1日96回)へ増やして取りこぼしを減らす。
+    #   ic_club_notify.yml(5,35)・notify.yml(*/30=0,30)とも重複しない。
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  # ★2026-07-30 統一: pushする4本を同一groupにして「同時に走らせない」
+  #   別groupだと同時実行→git pushがnon-fast-forwardで衝突→job failure→メール通知
+  #   同一groupなら順番待ちになるので衝突そのものが発生しない
+  group: discord-rss-notifier-repo-write
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install feedparser
+
+      - name: Run AIラボ notifier
+        env:
+          DISCORD_AILAB_WEBHOOK_OPENAI: ${{ secrets.DISCORD_AILAB_WEBHOOK_OPENAI }}
+          DISCORD_AILAB_WEBHOOK_CLAUDE: ${{ secrets.DISCORD_AILAB_WEBHOOK_CLAUDE }}
+          DISCORD_AILAB_WEBHOOK_GEMINI: ${{ secrets.DISCORD_AILAB_WEBHOOK_GEMINI }}
+          DISCORD_AILAB_WEBHOOK_XAI: ${{ secrets.DISCORD_AILAB_WEBHOOK_XAI }}
+          DISCORD_AILAB_WEBHOOK_COPILOT: ${{ secrets.DISCORD_AILAB_WEBHOOK_COPILOT }}
+          DISCORD_AILAB_WEBHOOK_META: ${{ secrets.DISCORD_AILAB_WEBHOOK_META }}
+          DISCORD_AILAB_WEBHOOK_CHINA: ${{ secrets.DISCORD_AILAB_WEBHOOK_CHINA }}
+          DISCORD_AILAB_WEBHOOK_LOCAL: ${{ secrets.DISCORD_AILAB_WEBHOOK_LOCAL }}
+          DISCORD_AILAB_WEBHOOK_IMGVID: ${{ secrets.DISCORD_AILAB_WEBHOOK_IMGVID }}
+          DISCORD_AILAB_WEBHOOK_AUDIO: ${{ secrets.DISCORD_AILAB_WEBHOOK_AUDIO }}
+          DISCORD_AILAB_WEBHOOK_TOOLS: ${{ secrets.DISCORD_AILAB_WEBHOOK_TOOLS }}
+          DISCORD_AILAB_WEBHOOK_PAPERS: ${{ secrets.DISCORD_AILAB_WEBHOOK_PAPERS }}
+          DISCORD_AILAB_WEBHOOK_GENERAL: ${{ secrets.DISCORD_AILAB_WEBHOOK_GENERAL }}
+          DISCORD_AILAB_WEBHOOK_RELEASE: ${{ secrets.DISCORD_AILAB_WEBHOOK_RELEASE }}
+          DISCORD_AILAB_WEBHOOK_WORLD: ${{ secrets.DISCORD_AILAB_WEBHOOK_WORLD }}
+        run: python ailab_news_bot.py
+
+      - name: Commit updated ailab_seen_urls.json (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ailab_seen_urls.json
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update ailab_seen_urls.json"
+          # 同一リポジトリに4本のworkflowがpushするため衝突する。
+          # pull --rebase してから最大3回リトライ(market_notify.ymlと同じ方式)
+          for i in 1 2 3; do
+            git pull --rebase origin main || true
+            git push && break
+            echo "Push retry $i"
+            sleep 3
+          done

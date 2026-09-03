@@ -294,71 +294,51 @@ def is_ja(t):
     if not t: return True
     return len(_JP_RE.findall(t)) >= max(3, int(len(t) * 0.12))   # 既に日本語なら翻訳しない
 
-# ---- 翻訳エンジン（★単一エンジンの上限で全滅しないよう複数を分散運用する）----
-# 2026-09-03 実叩き: google gtx / MyMemory / Gemini の3つが日本語を返した。
-#   Lingva(2インスタンス)=HTTP500 / LibreTranslate(2インスタンス)=timeout・JSONエラー で不採用。
-#   ★google gtx はローカルからは通るが GitHub Actions のIPからは弾かれる実績あり
-#     (ログ実物「翻訳サーバー応答なし(6s×3回連続) → 以後は原文のまま投稿」= 英語のまま98件の原因)。
-#     だから単独運用にせず、記事ごとにエンジンを回して負荷を 1/N に分散する。
-def _tr_google(text, timeout):
-    url = "https://translate.googleapis.com/translate_a/single?" + urllib.parse.urlencode({
-        "client": "gtx", "sl": "auto", "tl": "ja", "dt": "t", "q": text[:4800]})
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return "".join(seg[0] for seg in data[0] if seg and seg[0])
+# ---- 翻訳（★GIT内で完結。外部の翻訳APIサービスを実行時に一切叩かない）----
+# 2026-09-03 Hikârư制約: 「GIT+Discord完結」。外部翻訳API(Google非公式/MyMemory/Gemini等)は使わない。
+#   旧実装は Google翻訳の非公式endpointを叩いていたが、GitHub ActionsのIPから弾かれ
+#   (ログ実物「翻訳サーバー応答なし(6s×3回連続) → 以後は原文のまま投稿」)、
+#   実機で英語のまま98件・論文は21件中14件が未翻訳という状態を作っていた。
+#   → argostranslate(CTranslate2ベース)でrunner内ローカル推論に変更。
+#     実測: モデル準備10.9s、翻訳は1件目7.1s(ロード込)、2件目以降 0.06〜0.10s。
+_ARGOS = None   # None=未初期化 / True=使える / False=使えない
 
-def _tr_mymemory(text, timeout):
-    url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode({
-        "q": text[:500], "langpair": "en|ja"})
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        d = json.loads(resp.read().decode("utf-8"))
-    return (d.get("responseData") or {}).get("translatedText", "")
-
-def _tr_gemini(text, timeout):
-    key = os.environ.get("GOOGLE_AI_API_KEY", "")
-    if not key:
-        raise RuntimeError("no GOOGLE_AI_API_KEY")
-    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
-           "gemini-3.1-flash-lite:generateContent?key=" + key)
-    body = {"contents": [{"parts": [{"text":
-            "次の英文を自然な日本語のニュース見出しに訳してください。訳文だけを出力:\n" + text[:900]}]}]}
-    req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json", "User-Agent": UA},
-                                 method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        d = json.loads(resp.read().decode("utf-8"))
-    return d["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-_ENGINES = [("google", _tr_google), ("mymemory", _tr_mymemory), ("gemini", _tr_gemini)]
-_ENG_FAIL = {name: 0 for name, _ in _ENGINES}   # エンジンごとの連続失敗数
-_ENG_IDX = 0                                     # ラウンドロビンの現在位置
+def _argos_ready():
+    global _ARGOS
+    if _ARGOS is not None:
+        return _ARGOS
+    try:
+        import argostranslate.package as P
+        import argostranslate.translate as T
+        codes = {l.code for l in T.get_installed_languages()}
+        if not ("en" in codes and "ja" in codes):
+            P.update_package_index()
+            pkgs = [p for p in P.get_available_packages()
+                    if p.from_code == "en" and p.to_code == "ja"]
+            if not pkgs:
+                print("    argostranslate: en->ja パッケージが見つからない")
+                _ARGOS = False
+                return _ARGOS
+            P.install_from_path(pkgs[0].download())
+        _ARGOS = True
+    except Exception as e:
+        print(f"    argostranslate 準備失敗: {type(e).__name__}: {str(e)[:80]}")
+        _ARGOS = False
+    return _ARGOS
 
 def to_ja(t):
-    """★複数エンジンをラウンドロビンで分散。1エンジンあたりの負荷を 1/N に下げ、
-       上限や遮断で1つ落ちても残りが拾う。全部失敗した時だけ原文を返す。"""
-    global _ENG_IDX
+    """英文を日本語へ。runner内のローカル推論のみを使い、外部APIは叩かない。
+       失敗時は原文のまま返す(重要ニュースは英語でも出す)。"""
     if not t or is_ja(t):
         return t
-    n = len(_ENGINES)
-    for k in range(n):
-        idx = (_ENG_IDX + k) % n
-        name, fn = _ENGINES[idx]
-        if _ENG_FAIL[name] >= _TR_MAX_FAIL:      # そのエンジンだけ諦める(他は生かす)
-            continue
-        try:
-            out = fn(t, _TR_TIMEOUT_SEC)
-            if out and is_ja(out):
-                _ENG_FAIL[name] = 0
-                _ENG_IDX = (idx + 1) % n          # 次の記事は次のエンジンから＝負荷分散
-                return out
-            _ENG_FAIL[name] += 1                  # 応答はしたが日本語でない
-        except Exception:
-            _ENG_FAIL[name] += 1
-            if _ENG_FAIL[name] == _TR_MAX_FAIL:
-                print(f"    翻訳エンジン {name} を以後スキップ({_TR_MAX_FAIL}回連続失敗)")
-    return t   # 全エンジン失敗＝原文のまま(重要ニュースは英語でも出す)
+    if not _argos_ready():
+        return t
+    try:
+        import argostranslate.translate as T
+        out = T.translate(t[:1500], "en", "ja")
+        return out if (out and is_ja(out)) else t
+    except Exception:
+        return t
 
 def load_webhooks():
     m = {}

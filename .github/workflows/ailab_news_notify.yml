@@ -31,8 +31,18 @@ jobs:
         with:
           python-version: "3.12"
 
+      # ★翻訳はrunner内のローカル推論(argostranslate)で行い、外部翻訳APIを叩かない(GIT完結)。
+      #   モデル(en->ja)は初回のみ取得し、以後はキャッシュから復元して実行時間を抑える。
+      - name: Cache argostranslate model
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/argos-translate
+            ~/.local/cache/argos-translate
+          key: argos-en-ja-v1
+
       - name: Install dependencies
-        run: pip install feedparser
+        run: pip install feedparser argostranslate
 
       - name: Run AIラボ notifier
         env:

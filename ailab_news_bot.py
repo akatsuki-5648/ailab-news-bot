@@ -71,7 +71,18 @@ COPILOT_TERMS = ["Copilot", "GitHub Copilot", "Microsoft 365 Copilot", "Copilot 
 META_TERMS = ["Meta AI", "Meta Llama", "Llama", "Llama 4"]
 CHINA_TERMS = ["DeepSeek", "Qwen", "Kimi", "Zhipu", "GLM", "MiniMax", "Moonshot"]
 LOCAL_TERMS = ["Hugging Face", "Ollama", "llama.cpp", "GGUF", "LM Studio", "vLLM", "ローカルLLM"]
-IMGVID_TERMS = ["Midjourney", "Sora", "Runway", "Kling", "Veo", "Imagen", "Stable Diffusion", "Flux", "Luma AI", "Pika", "画像生成", "動画生成"]
+IMGVID_TERMS = ["Midjourney", "Sora", "Runway", "Kling", "Veo", "Imagen", "Stable Diffusion", "Flux", "Luma AI", "Pika", "画像生成", "動画生成",
+                "Seedance", "Hailuo", "nano banana", "Black Forest", "Wan", "AI画像", "AI動画", "Qwen-Image"]
+# ★2026-09-05 実叩きで出た誤ヒットを名指しで潰す。⑨の語は一般語と衝突するため必須。
+#   Runway→ファッションのランウェイ / Sora→ときのそら・空 / Flux→eスポーツのチーム名
+IMGVID_EXCLUDE = ["訴訟", "裁判", "著作権訴訟", "提訴", "係争", "映画スタジオ",
+                  "UNIVERSAL MUSIC", "VITURE", "スマートグラス", "医療", "サウナ", "超音波", "Spa",
+                  "COLLECTION", "コレクション", "ファッション", "ランウェイ", "伊勢丹",
+                  "Marc Jacobs", "マーク ジェイコブス", "デザイナー",
+                  "ホロライブ", "ときのそら", "VTuber", "Vtuber", "shorts",
+                  "Esports", "esports", "Sofascore", "ライブスコア",
+                  "天気", "tenki.jp", "ウォーターキッズ",
+                  "絶対領域", "ミニスカ", "グラビア", "ｄメニュー", "配信者"]
 AUDIO_TERMS = ["ElevenLabs", "Suno", "Udio", "Whisper", "VOICEVOX", "音声生成", "音楽生成", "音声合成", "TTS", "voice", "speech"]
 TOOL_TERMS = ["Claude Code", "Codex", "Cursor", "GitHub Copilot", "n8n", "MCP", "LangChain", "Devin", "AIエージェント"]
 PAPER_TERMS = ["LLM", "language model", "agent", "reasoning", "RAG", "GPT", "diffusion", "multimodal", "transformer", "benchmark"]
@@ -143,11 +154,21 @@ TOPICS = [
      rss("https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day&limit=10", include=LOCAL_TERMS + ["LLM", "model"]),
      rss("https://ollama.com/blog/rss.xml", include=LOCAL_TERMS + ["Gemma", "model", "MLX"])]},
  {"num":"⑨","name":"画像・動画AI速報","env":"IMGVID","color":COL_FIELD,"sources":[
-     gn('(Midjourney OR Sora OR Runway OR Kling OR Veo OR Imagen OR "Stable Diffusion" OR Flux OR "Luma AI" OR Pika) (発表 OR 公開 OR 提供開始 OR 新機能 OR 新モデル OR 動画生成 OR 画像生成 OR アップデート)',
-        include=IMGVID_TERMS, exclude=["訴訟", "裁判", "著作権訴訟", "提訴", "係争", "映画スタジオ", "UNIVERSAL MUSIC", "VITURE", "スマートグラス", "医療", "サウナ", "超音波", "Spa"]),
-     rss("https://gigazine.net/news/rss_2.0/", include=IMGVID_TERMS),
-     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=IMGVID_TERMS),
-     rss("https://hnrss.org/frontpage", include=IMGVID_TERMS)]},
+     # ★2026-09-05 実叩きで確定（⑩④は9/3に直したが⑨だけ限定語が残っていた）。
+     #   現行 '(...) (発表 OR 公開 OR ...)' は Googleが生100件返すのに【48h窓に0件】。
+     #   ★ただし限定語を外すだけでは駄目: Runway=ファッションのランウェイ6件 /
+     #     Sora=ときのそら・空4件 / Flux=eスポーツ4件 と一般語衝突する → 固有名詞化する。
+     #   ★21語を1本のORにまとめると Google の返却が 100→74件 に落ちる → 3本に割る。
+     #   実測: 現行 0件 → 修正後 6件/48h（英語固有名詞2 + 日本語一般語3 + 新興モデル名1・ノイズ0）
+     gn('"Stable Diffusion" OR Midjourney OR "Sora 2" OR "Runway Gen" OR RunwayML OR "Luma AI" OR "Pika Labs" OR "Flux.1" OR "Black Forest Labs"',
+        include=IMGVID_TERMS, exclude=IMGVID_EXCLUDE),
+     gn('"画像生成AI" OR "動画生成AI" OR "AI画像生成" OR "AI動画生成" OR "生成AI 動画"',
+        include=IMGVID_TERMS, exclude=IMGVID_EXCLUDE),
+     gn('Kling OR "Veo 3" OR Imagen OR Seedance OR Hailuo OR "nano banana" OR "Qwen-Image"',
+        include=IMGVID_TERMS, exclude=IMGVID_EXCLUDE),
+     rss("https://gigazine.net/news/rss_2.0/", include=IMGVID_TERMS, exclude=IMGVID_EXCLUDE),
+     rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=IMGVID_TERMS, exclude=IMGVID_EXCLUDE),
+     rss("https://hnrss.org/frontpage", include=IMGVID_TERMS, exclude=IMGVID_EXCLUDE)]},
  {"num":"⑩","name":"音声・音楽AI速報","env":"AUDIO","color":COL_FIELD,"sources":[
      # ★2026-09-03 実叩き: 後置の限定語(発表 OR 公開…)がANDで効き48h以内0件だった。外すと実測3件。
      #   新ソースは全滅(elevenlabs blog=404 / engadgetは"voice"の誤ヒット / reddit=429)のため追加しない。

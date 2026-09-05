@@ -74,6 +74,8 @@ jobs:
         run: python ailab_news_bot.py
 
       - name: Commit updated ailab_seen_urls.json (if changed)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -82,9 +84,22 @@ jobs:
           git commit -m "chore: update ailab_seen_urls.json"
           # 同一リポジトリに4本のworkflowがpushするため衝突する。
           # pull --rebase してから最大3回リトライ(market_notify.ymlと同じ方式)
+          PUSHED=no
           for i in 1 2 3; do
             git pull --rebase origin main || true
-            git push && break
+            git push && { PUSHED=yes; break; }
             echo "Push retry $i"
             sleep 3
           done
+          # ★2026-09-05 追加: pushが3回とも死ぬと seen が【静かに】失われ、
+          #   数時間後に同じ記事がもう一度流れていた（実測 #125: 15:22に投稿→
+          #   commitが存在しない→18:28に再投稿）。しかも run は success のままだった。
+          #   ★exit 1 で落とす案は採らない。同一リポのpush衝突でjob failureを出すと
+          #     GitHubのエラーメールが連続する事故が 2026-07-30 / 07-31 に起きている。
+          #   ★代わりに「失敗を切っ掛けにして、同じ穴に落ちないルートへ入れる」。
+          #     git push が死ぬ原因は detached HEAD と rebase衝突＝作業ツリーとブランチ。
+          #     Contents API はそのどちらも使わない。
+          if [ "$PUSHED" != "yes" ]; then
+            echo "::warning::git push が通らなかった。別経路(Contents API)で保存する"
+            python .github/save_seen_via_api.py
+          fi

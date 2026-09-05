@@ -25,6 +25,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # ★2026-09-05 重複投稿の根本原因を実測で確定して修正。
+          #   actions/checkout は既定で github.sha（＝run が【作成】された時点のSHA）を取る。
+          #   concurrency で順番待ちしている間に前のrunが seen をcommitすると、
+          #   待たされたrunは古いSHAをcheckout＝seenが巻き戻り、既出記事を再投稿していた。
+          #   実測(9/5): 直近30本中5本がこれ(#98/#107/#114/#123/#125)。
+          #        余分な投稿 9/3=34件 9/4=38件 9/5=13件。時間差の中央値4.2分。
+          #   ref を明示すると【実行時点のブランチ先端】を取るのでズレが消える。
+          #   ★発火の冗長性(Layer1/3/5)は一切削らない。ここ1箇所で止める。
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5

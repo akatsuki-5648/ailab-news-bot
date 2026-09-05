@@ -432,7 +432,13 @@ def collect_topic_items(t, seen, sleep_sec=0.4):
         rows = []
         for title, link, summ, srclabel in fetch(src):
             title_key = canonical_title(title)
-            if not link or link in seen or link in keys or title_key in keys:
+            # ★2026-09-05 実測: Google Newsは同じ記事に【URLを3種類】振ってくる。
+            #   seenがlinkしか持っていなかったため、同じ記事が媒体違いで何度も流れていた。
+            #   実測(直近100件×15CH): URLだけ=121件しか止まらない / タイトルも見る=256件(+135)。
+            #   誤爆の確認: 同じキーで原文が違った81組は【全部が媒体名の違いだけ】=同じ記事。
+            #              12字未満の短いキーで重複扱いになったのは1組のみ(それも原文1種類)。
+            if (not link or link in seen or title_key in seen
+                    or link in keys or title_key in keys):
                 continue
             keys.add(link)
             keys.add(title_key)
@@ -509,9 +515,14 @@ def main():
         picked = collect_topic_items(t, seen)
         if not picked:
             print(f"{t['num']} {t['name']} … 新規なし"); continue
+        # ★翻訳の【前】のキーを先に取る。to_ja後に取ると日本語で保存して英語で照合するズレが出る。
+        keys_before = [canonical_title(ti) for (ti, _, _, _) in picked]
         picked = [(to_ja(ti), li, to_ja(su), sr) for (ti, li, su, sr) in picked]  # 英語→日本語（失敗時は原文）
         st = post(url, f"**{t['num']}｜{t['name']}**", picked, t["color"])
-        for _, link, _, _ in picked: seen.add(link)
+        for (ti, link, _, _), k0 in zip(picked, keys_before):
+            seen.add(link)
+            seen.add(k0)                      # ★翻訳前（同じ英語記事が別フィードから来た時に効く）
+            seen.add(canonical_title(ti))     # ★翻訳後（Discordに実際に出ている形と一致させる）
         print(f"{t['num']} {t['name']} … {len(picked)}件 ({st})")
         time.sleep(1.3)
     save_seen(seen); print("seen保存:", len(seen))

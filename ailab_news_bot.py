@@ -426,6 +426,15 @@ def fetch(src):
     return out
 
 def collect_topic_items(t, seen, sleep_sec=0.4):
+    # ★2026-09-08 修正: タイトルのキーは【部屋ごと】に持つ。
+    #   2026-09-05にタイトル併用を入れた時、seenが全トピック共通の1つの集合なので
+    #   「同じ記事は15部屋のどこか1つにしか出せない」状態になっていた。
+    #   実測(9/8): タイトルで止まっていた7件は【7件とも別の部屋にだけ出ていた】
+    #     例: 「M365 CopilotでもGPT-6 Astra利用可能に」→チャッピーに出て★copilotに出せない
+    #         「Gemini 3.8 Flash提供開始」→geminiに出て★新モデルリリースに出せない
+    #   15分類は「分類が重なる記事は両方に出る」のが仕様なので、部屋名を接頭辞に付ける。
+    #   ★URLの方は従来どおり全部屋共通のまま（同じURLは1回だけ、は元からの設計）。
+    room = t["env"] + "|"
     source_hits = []
     keys = set()
     for src in t["sources"]:
@@ -437,7 +446,7 @@ def collect_topic_items(t, seen, sleep_sec=0.4):
             #   実測(直近100件×15CH): URLだけ=121件しか止まらない / タイトルも見る=256件(+135)。
             #   誤爆の確認: 同じキーで原文が違った81組は【全部が媒体名の違いだけ】=同じ記事。
             #              12字未満の短いキーで重複扱いになったのは1組のみ(それも原文1種類)。
-            if (not link or link in seen or title_key in seen
+            if (not link or link in seen or (room + title_key) in seen
                     or link in keys or title_key in keys):
                 continue
             keys.add(link)
@@ -519,10 +528,11 @@ def main():
         keys_before = [canonical_title(ti) for (ti, _, _, _) in picked]
         picked = [(to_ja(ti), li, to_ja(su), sr) for (ti, li, su, sr) in picked]  # 英語→日本語（失敗時は原文）
         st = post(url, f"**{t['num']}｜{t['name']}**", picked, t["color"])
+        room = t["env"] + "|"             # ★部屋ごとに持つ（分類をまたぐ掲載は殺さない）
         for (ti, link, _, _), k0 in zip(picked, keys_before):
             seen.add(link)
-            seen.add(k0)                      # ★翻訳前（同じ英語記事が別フィードから来た時に効く）
-            seen.add(canonical_title(ti))     # ★翻訳後（Discordに実際に出ている形と一致させる）
+            seen.add(room + k0)               # ★翻訳前（同じ英語記事が別フィードから来た時に効く）
+            seen.add(room + canonical_title(ti))  # ★翻訳後（Discordに出ている形と一致させる）
         print(f"{t['num']} {t['name']} … {len(picked)}件 ({st})")
         time.sleep(1.3)
     save_seen(seen); print("seen保存:", len(seen))

@@ -256,8 +256,20 @@ TOPICS = [
  {"num":"⑮","name":"世界のAI動向・規制","env":"WORLD","color":COL_SUM,"sources":[
      gn('(AI規制 OR AI政策 OR AI法 OR AI著作権 OR "EU AI Act" OR "AI safety" OR "AI regulation" OR "AI export controls") (政府 OR EU OR 米国 OR 中国 OR 日本 OR 法案 OR 規制 OR policy OR regulation) -データセンター -イベント',
         include=POLICY_TERMS, exclude=["Data Center Japan", "出展", "展示会", "ライブ配信", "無料公開"]),
-     rss("https://www3.nhk.or.jp/rss/news/cat6.xml", include=POLICY_TERMS + ["AI", "半導体", "中国", "米国"]),
-     rss("https://www3.nhk.or.jp/rss/news/cat5.xml", include=POLICY_TERMS + ["AI", "半導体", "経済安全保障"]),
+     # ★2026-09-12 NHKのRSSを2本とも外した。★cat0〜cat7 の【全カテゴリ】が
+     #   2026-08-08〜08-09 で止まっている（実測 835〜849時間前＝約35日）。
+     #   ★HTTP 200 を返し、中身(ent 7〜264件)も返すので、叩くだけでは死んでいると気づけない。
+     #   ★日本語の総合ニュースに差し替えても駄目だった ── POLICY_TERMS が狭いので
+     #     共同(Yahoo配信)/朝日/毎日/時事/Yahoo主要/Yahoo IT を実測して【全部0件】。
+     #   ★効いたのは英語だった（実測46件）。株ネタだけ exclude で1件落ちる（他は全部残る）。
+     #   ★輸出規制の英語クエリは採らない ── "US Export Controls on Fuel"(燃料)や
+     #     レアアースの貿易記事が混ざる（POLICY_TERMS の "export controls" に当たってしまう）。
+     rss("https://news.google.com/rss/search?q=%22AI%20regulation%22%20OR%20%22AI%20Act%22%20OR%20%22AI%20policy%22%20OR%20%22AI%20safety%22%20OR%20%22AI%20governance%22&hl=en-US&gl=US&ceid=US:en",
+         include=POLICY_TERMS, exclude=["Stocks", "Stock to Buy", "Best AI Stocks", "share price",
+                                       "Investing.com", "Motley Fool", "Zacks", "price target",
+                                       "earnings call"]),
+     gn('"輸出規制" OR "半導体規制" OR "対中規制" OR "経済安全保障" OR "エヌビディア 中国"',
+        include=POLICY_TERMS),
      rss("https://feeds.bbci.co.uk/news/world/rss.xml", include=POLICY_TERMS + ["AI", "semiconductor"]),
      rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=POLICY_TERMS)]},
 ]

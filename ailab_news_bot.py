@@ -70,7 +70,28 @@ XAI_TERMS = ["xAI", "Grok"]
 COPILOT_TERMS = ["Copilot", "GitHub Copilot", "Microsoft 365 Copilot", "Copilot Studio", "Azure AI"]
 META_TERMS = ["Meta AI", "Meta Llama", "Llama", "Llama 4"]
 CHINA_TERMS = ["DeepSeek", "Qwen", "Kimi", "Zhipu", "GLM", "MiniMax", "Moonshot"]
-LOCAL_TERMS = ["Hugging Face", "Ollama", "llama.cpp", "GGUF", "LM Studio", "vLLM", "ローカルLLM"]
+LOCAL_TERMS = ["Hugging Face", "Ollama", "llama.cpp", "GGUF", "LM Studio", "vLLM", "ローカルLLM",
+               # ★2026-09-12 追加: ローカルで動かす話の語彙。★VRAM / on-device / オンデバイス は
+               #   入れない（実測で iPhone・Snapdragon・RTX5090・HPワークステーションが10件雪崩れ込む）。
+               #   ★蒸留 / distill も入れない（企業間の不正利用の事件記事を拾う＝⑦の担当）。
+               "ローカル LLM", "ローカル環境", "ローカルで動", "セルフホスト", "self-host",
+               "local LLM", "run locally", "LocalLLaMA", "オンプレ",
+               "SGLang", "ExLlama", "MLX", "llamafile", "KoboldCpp", "text-generation-webui",
+               "TensorRT-LLM", "MLC LLM",
+               "Unsloth", "量子化", "quantiz", "GPTQ", "AWQ", "bitsandbytes", "LoRA", "QLoRA",
+               "ファインチューニング", "fine-tun",
+               "Qwen", "Gemma", "Mistral", "DeepSeek", "Phi-", "GLM", "Kimi", "MiniMax",
+               "Nemotron", "OLMo", "Granite", "Command R", "Falcon", "Llama",
+               "オープンウェイト", "open-weight", "open weight", "open weights",
+               "ウェイト公開", "重み公開", "tok/s", "tokens/s", "推論エンジン", "KVキャッシュ", "MoE"]
+# ★2026-09-12 実測で混ざったものを名指しで落とす（GLOBAL_EXCLUDE に無いものだけ）
+LOCAL_EXCLUDE = ["攻撃", "侵入", "マルウェア", "ランサム", "詐欺", "脆弱性", "情報流出", "不正アクセス",
+                 "[写真]", "値下げ", "株式", "売上高", "資金調達", "買収", "上場",
+                 "提携", "パートナーシップ", "訴訟", "蒸留",
+                 "iPhone", "Snapdragon", "Qualcomm", "ワークステーション", "スマートフォン"]
+# ★教材・講座の宣伝（日本語側は GLOBAL_EXCLUDE が既に殺している。英語だけ素通りしていた）
+#   ★"Course" 単独は contains_any が小文字部分一致なので "of course" を巻き込む → "Course -" で限定。
+LOCAL_TITLE_EXCLUDE = ["Course -", "Bootcamp", "Masterclass", "Udemy", "Coursera", "Tutorial"]
 IMGVID_TERMS = ["Midjourney", "Sora", "Runway", "Kling", "Veo", "Imagen", "Stable Diffusion", "Flux", "Luma AI", "Pika", "画像生成", "動画生成",
                 "Seedance", "Hailuo", "nano banana", "Black Forest", "Wan", "AI画像", "AI動画", "Qwen-Image"]
 # ★2026-09-05 実叩きで出た誤ヒットを名指しで潰す。⑨の語は一般語と衝突するため必須。
@@ -146,13 +167,29 @@ TOPICS = [
      rss("https://gigazine.net/news/rss_2.0/", include=CHINA_TERMS),
      rss("https://hnrss.org/frontpage", include=CHINA_TERMS)]},
  # 🔬 分野別 ⑧〜⑫
- {"num":"⑧","name":"ローカルLLM速報","env":"LOCAL","color":COL_FIELD,"sources":[
-     gn('(ローカルLLM OR Ollama OR "Hugging Face" OR llama.cpp OR GGUF OR "LM Studio" OR vLLM) (発表 OR 公開 OR 提供開始 OR 新モデル OR GPU OR 推論 OR 高速化)',
-        include=LOCAL_TERMS),
-     rss("https://huggingface.co/blog/feed.xml", include=LOCAL_TERMS + ["model", "agents", "inference"]),
-     rss("https://hnrss.org/frontpage", include=LOCAL_TERMS),
-     rss("https://www.reddit.com/r/LocalLLaMA/top/.rss?t=day&limit=10", include=LOCAL_TERMS + ["LLM", "model"]),
-     rss("https://ollama.com/blog/rss.xml", include=LOCAL_TERMS + ["Gemma", "model", "MLX"])]},
+  {"num":"⑧","name":"ローカルLLM速報","env":"LOCAL","color":COL_FIELD,"sources":[
+      # ★2026-09-12 実測で全面改修。Hikârư「localをそれだけじゃトレンドに追いつけない」
+      #   実測: 5ソース中【★4本が0件】。生きていたのは r/LocalLLaMA top/day limit=10 だけで、
+      #   PER_SOURCE=3 のため ★この部屋の上限が 3件/run に落ちていた（48h実績19件・本番ログも「新規なし」）。
+      #   しかも中身が「Any 12gb VRAM users out there?」等の相談スレで、ニュースが0本だった。
+      #   ①旧GNは ⑨と同じ病気 ＝ 固有名詞(Ollama/llama.cpp/GGUF)に日本語の動詞(発表/提供開始)を
+      #     ANDで要求 → 日本語記事にその組合せは無く48h窓で0件。限定語を外し、日英で分けた。
+      #   ②hnrss.org/frontpage は上位30件に LOCAL_TERMS が入る確率が低く【構造的に常時0】→ 削除。
+      #   ③GitHubのreleases.atom は is_release_version_noise が "v0.13.0" 形を殺すので入れない。
+      #   ④Reddit は1本に絞る（2本入れると429のリスクが倍。PER_SOURCE=3なら hot の上位3件が質で勝る）
+      #   ★実測(2026-09-12 18時): 修正後 13件/run（未読11件）。
+      rss("https://www.reddit.com/r/LocalLLaMA/hot/.rss?limit=25", include=LOCAL_TERMS + ["LLM", "model"]),
+      gn('Qwen OR Gemma OR Mistral OR DeepSeek OR Kimi OR GLM OR Llama OR 量子化 OR GGUF',
+         include=LOCAL_TERMS, exclude=LOCAL_EXCLUDE, title_exclude=LOCAL_TITLE_EXCLUDE),
+      gn('"ローカルLLM" OR "ローカル環境" OR "ローカルで動かす" OR セルフホスト OR llama.cpp OR Ollama',
+         include=LOCAL_TERMS, exclude=LOCAL_EXCLUDE, title_exclude=LOCAL_TITLE_EXCLUDE),
+      rss("https://news.google.com/rss/search?q=%22local%20LLM%22%20OR%20%22run%20locally%22%20OR%20llama.cpp%20OR%20GGUF%20OR%20Ollama%20OR%20%22LM%20Studio%22%20OR%20vLLM%20OR%20Unsloth&hl=en-US&gl=US&ceid=US:en",
+          include=LOCAL_TERMS, exclude=LOCAL_EXCLUDE, title_exclude=LOCAL_TITLE_EXCLUDE),
+      rss("https://news.google.com/rss/search?q=%22open%20weights%22%20OR%20%22open-weight%20model%22%20OR%20%22weights%20released%22%20OR%20%22available%20on%20Hugging%20Face%22&hl=en-US&gl=US&ceid=US:en",
+          include=LOCAL_TERMS, exclude=LOCAL_EXCLUDE, title_exclude=LOCAL_TITLE_EXCLUDE),
+      rss("https://hnrss.org/newest?q=%22local+LLM%22&count=25", include=LOCAL_TERMS + ["LLM"]),
+      rss("https://huggingface.co/blog/feed.xml", include=LOCAL_TERMS + ["model", "agents", "inference"]),
+      rss("https://ollama.com/blog/rss.xml", include=LOCAL_TERMS + ["Gemma", "model", "MLX"])]},
  {"num":"⑨","name":"画像・動画AI速報","env":"IMGVID","color":COL_FIELD,"sources":[
      # ★2026-09-05 実叩きで確定（⑩④は9/3に直したが⑨だけ限定語が残っていた）。
      #   現行 '(...) (発表 OR 公開 OR ...)' は Googleが生100件返すのに【48h窓に0件】。

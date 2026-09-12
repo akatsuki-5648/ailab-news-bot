@@ -146,12 +146,25 @@ TOPICS = [
      rss("https://rss.itmedia.co.jp/rss/2.0/aiplus.xml", include=XAI_TERMS),
      rss("https://gigazine.net/news/rss_2.0/", include=XAI_TERMS),
      rss("https://hnrss.org/frontpage", include=XAI_TERMS)]},
- {"num":"⑤","name":"コパイロット速報","env":"COPILOT","color":COL_BIZ,"sources":[
-     gn('("Microsoft Copilot" OR "GitHub Copilot" OR "Copilot Studio" OR "Azure AI" OR "M365 Copilot") (発表 OR 公開 OR 提供開始 OR 新機能 OR 料金 OR アップデート)',
-        include=COPILOT_TERMS, exclude=["保険", "library", "farming", "school"]),
+  {"num":"⑤","name":"コパイロット速報","env":"COPILOT","color":COL_BIZ,"sources":[
+      # ★2026-09-12 実測で修正。⑧⑨と全く同じ病気だった。
+      #   旧: ("Microsoft Copilot" OR ...) (発表 OR 公開 OR 提供開始 OR 新機能 OR 料金 OR アップデート)
+      #   → Googleが返す生100件の【★中央値 1755時間前(73日前)・最古 239日前】で、48h窓に★1件しか残らない。
+      #     （Discord実測でも 🪟copilot速報 は48hで4件しか出ていなかった）
+      #   ★固有名詞だけのクエリに日本語の動詞をANDで要求すると、Googleは古い記事で100件を埋める。
+      #     limiter の "料金" が「Copilot Studioの料金はいくら？全プラン比較」を呼び込んでもいた。
+      #   ★exclude(保険/library/farming/school) は "Copilot"=副操縦士 等の誤爆よけ。★消すな。
+      #   ★"Azure AI" もクエリに残す（外すと英語が7件→5件に落ちる実測）。
+      #   ★実測: 旧1件 → 日本語5件 + 英語7件。
+      #     Azure周辺クエリ("Azure AI Foundry" 等)と「Copilot + 一般語limiter」は実測0件なので採らない。
+      gn('"GitHub Copilot" OR "Microsoft Copilot" OR "Copilot Studio" OR "Microsoft 365 Copilot" OR "M365 Copilot" OR "Azure AI"',
+         include=COPILOT_TERMS, exclude=["保険", "library", "farming", "school"]),
+      rss("https://news.google.com/rss/search?q=%22GitHub%20Copilot%22%20OR%20%22Microsoft%20Copilot%22%20OR%20%22Copilot%20Studio%22%20OR%20%22Microsoft%20365%20Copilot%22%20OR%20%22M365%20Copilot%22%20OR%20%22Azure%20AI%22&hl=en-US&gl=US&ceid=US:en",
+          include=COPILOT_TERMS, exclude=["保険", "library", "farming", "school"]),
      rss("https://www.publickey1.jp/atom.xml", include=COPILOT_TERMS),
      rss("https://zenn.dev/topics/ai/feed", include=COPILOT_TERMS, title_include=["Copilot"]),
-     rss("https://github.blog/changelog/label/copilot/feed/", include=COPILOT_TERMS, title_include=["Copilot"])]},
+     rss("https://github.blog/changelog/label/copilot/feed/", include=COPILOT_TERMS, title_include=["Copilot"]),
+      rss("https://github.blog/feed/", include=COPILOT_TERMS)]},
  {"num":"⑥","name":"メタAI速報","env":"META","color":COL_BIZ,"sources":[
      # ★2026-09-03 実叩き: 後置の限定語(発表 OR 公開…)がANDで効き48h以内0件だった。外すと実測1件。
      #   新ソースは全滅(ai.meta.com/blog=404 / theverge・techmeme・hnrss=0)のため追加せずクエリのみ広げる。
